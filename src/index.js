@@ -27,6 +27,8 @@ export function serve(request, mime, data) {
     "Content-Type": mime, "Accept-Ranges": "bytes", "Cache-Control": "public, max-age=604800, immutable",
     "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; sandbox",
     "Cross-Origin-Resource-Policy": "cross-origin", "Content-Disposition": "inline",
+    // Public files: the site reads voice messages to draw their waveform.
+    "Access-Control-Allow-Origin": "*", "Access-Control-Expose-Headers": "Content-Length, Content-Range",
   };
   const range = request.headers.get("Range")?.match(/^bytes=(\d*)-(\d*)$/);
   if (range && (range[1] || range[2])) {

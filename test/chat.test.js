@@ -291,6 +291,7 @@ describe("media", () => {
     const full = serve(new Request("https://x/media/a"), "video/mp4", data);
     assert.equal(full.status, 200);
     assert.equal(full.headers.get("Content-Security-Policy"), "default-src 'none'; sandbox");
+    assert.equal(full.headers.get("Access-Control-Allow-Origin"), "*");
     const part = serve(new Request("https://x/media/a", { headers: { Range: "bytes=2-5" } }), "video/mp4", data);
     assert.equal(part.status, 206);
     assert.equal(part.headers.get("Content-Range"), "bytes 2-5/10");
