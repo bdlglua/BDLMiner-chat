@@ -4,6 +4,17 @@ The live chat of the [BDLMiner site](https://bdlglua.github.io/BDLMinerV1/): the
 bubble at the bottom right. Visitors pick a name and talk, without an account; the
 team signs in with a key to get a badge and moderate.
 
+## Names
+
+Each browser keeps a random secret code. The first message registers the name chosen
+with that code (the room stores only the code's hash): the name then belongs to it,
+whatever its spelling ("Bob", "bob", "B.o.b", "Böb" are one name), and it can change
+only after **30 days** (a different capitalisation is not a change). *My code* copies
+the code; `/code <code>` on another device brings the name there. At most 3 new names
+a day come from one connection, so that clearing the browser does not dodge the wait.
+The team's names (admin, BDL…, moderator, support, team…) are kept for the team, who
+may take any name, even one already registered, at any time.
+
 It runs as a [Cloudflare Worker](https://developers.cloudflare.com/workers/) (free plan)
 with one Durable Object: the room. It holds the WebSockets with the hibernation API (an
 idle room costs nothing) and keeps the last 200 messages, at most 7 days, in SQLite.
@@ -30,11 +41,13 @@ buttons. *Ban* removes all the messages of their author, who can no longer write
 
 ## Protocol
 
-`GET /ws` (WebSocket) — the client sends JSON: `{"type":"say","name","text"}`,
+`GET /ws` (WebSocket) — the client sends JSON: `{"type":"identify","code"}` (its
+secret code), `{"type":"register","name"}`, `{"type":"say","text"}`,
 `{"type":"auth","key"}`, and for the team `{"type":"delete"|"ban","id"}` and
 `{"type":"unbanall"}`. The room answers `hello` (last 50 messages, people online),
-`message`, `removed` (ids), `online` (count), `auth` and `error` (`name`, `reserved`,
-`empty`, `too_long`, `blocked`, `link`, `slow`, `banned`, `forbidden`, `invalid`).
+`you` (`name`, `changeAt`), `message`, `removed` (ids), `online` (count), `auth` and
+`error` (`name`, `reserved`, `taken`, `wait` with `until`, `too_many`, `empty`,
+`too_long`, `blocked`, `link`, `slow`, `banned`, `forbidden`, `invalid`).
 
 `GET /api/messages` — the last 50 messages as JSON, for the site.
 

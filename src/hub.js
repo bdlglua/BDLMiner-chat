@@ -1,8 +1,14 @@
 // What the chat room does with each WebSocket message, apart from the
 // Workers runtime so that it can be tested: `sockets()` lists the open
-// connections, each with `send(text)` and its attachment {sender, admin}.
+// connections, each with `send(text)` and its attachment {sender, admin, id}
+// (id: the hash of the browser's secret code, once it identified itself).
 
 import { HISTORY } from "./room.js";
+
+export async function hashCode(code) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("bdlminer-chat:" + code));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 export function sameKey(given, key) {
   if (typeof given !== "string" || !key) return false;
@@ -41,7 +47,12 @@ export class Hub {
     this.broadcast({ type: "online", count: this.sockets().filter((ws) => ws !== closing).length });
   }
 
-  receive(ws, raw, now = Date.now()) {
+  you(ws, id) {
+    const mine = this.room.nameOf(id);
+    this.send(ws, { type: "you", name: mine?.name ?? null, changeAt: mine?.changeAt ?? null });
+  }
+
+  async receive(ws, raw, now = Date.now()) {
     let m;
     try {
       m = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw));
@@ -51,8 +62,21 @@ export class Hub {
     if (!m || typeof m !== "object" || typeof raw === "string" && raw.length > 4096) return this.send(ws, { type: "error", error: "invalid" });
     const who = this.attachment(ws);
     switch (m.type) {
+      case "identify": {
+        if (typeof m.code !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(m.code)) return this.send(ws, { type: "error", error: "invalid" });
+        const id = await hashCode(m.code);
+        this.setAttachment(ws, { ...this.attachment(ws), id });
+        return this.you(ws, id);
+      }
+      case "register": {
+        if (!who.id) return this.send(ws, { type: "error", error: "invalid" });
+        const r = this.room.register(who.id, m.name, { sender: who.sender, admin: who.admin, now });
+        if (r.error) return this.send(ws, { type: "error", error: r.error, until: r.until });
+        return this.send(ws, { type: "you", name: r.name, changeAt: r.changeAt });
+      }
       case "say": {
-        const r = this.room.post({ name: m.name, text: m.text }, { sender: who.sender, admin: who.admin, now });
+        const name = this.room.nameOf(who.id)?.name;
+        const r = this.room.post({ text: m.text }, { sender: who.sender, name, admin: who.admin, now });
         if (r.error) return this.send(ws, { type: "error", error: r.error });
         return this.broadcast({ type: "message", message: r.message });
       }

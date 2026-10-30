@@ -32,8 +32,8 @@ export class ChatRoom extends DurableObject {
     return this.room.history(HISTORY);
   }
 
-  webSocketMessage(ws, message) {
-    this.hub.receive(ws, message);
+  async webSocketMessage(ws, message) {
+    await this.hub.receive(ws, message);
   }
 
   webSocketClose(ws, code) {
