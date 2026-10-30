@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, it } from "node:test";
-import handler, { allowedOrigin, senderOf } from "../src/index.js";
+import handler, { allowedOrigin, senderOf, serve } from "../src/index.js";
 import { Hub, sameKey } from "../src/hub.js";
 import { cleanName, cleanText, refuse, reservedName } from "../src/moderation.js";
-import { CHANGE_AFTER, Room } from "../src/room.js";
+import { CHANGE_AFTER, MEDIA_MAX, Room, sniff } from "../src/room.js";
 
 // The Durable Object's SQL interface (ctx.storage.sql.exec) over node:sqlite.
 function sqlite() {
@@ -155,7 +155,7 @@ describe("hub", () => {
   it("identifies a browser by its code and remembers its name", async () => {
     const a = socket("a"); sockets.push(a);
     await msg(a, { type: "identify", code: CODE });
-    assert.deepEqual(a.sent.at(-1), { type: "you", name: null, changeAt: null });
+    assert.deepEqual(a.sent.slice(-2), [{ type: "you", name: null, changeAt: null }, { type: "mine", ids: [] }]);
     await msg(a, { type: "say", text: "hi" });
     assert.deepEqual(a.sent.at(-1), { type: "error", error: "name" });
     await msg(a, { type: "register", name: "Bob" });
@@ -163,7 +163,7 @@ describe("hub", () => {
     // Another device with the same code is the same person.
     const phone = socket("p"); sockets.push(phone);
     await msg(phone, { type: "identify", code: CODE });
-    assert.equal(phone.sent.at(-1).name, "Bob");
+    assert.equal(phone.sent.at(-2).name, "Bob");
     await msg(phone, { type: "say", text: "from my phone" });
     assert.equal(a.sent.at(-1).message.name, "Bob");
     // Someone else cannot take it.
@@ -194,9 +194,9 @@ describe("hub", () => {
     await msg(a, { type: "register", name: "Spam" });
     await msg(a, { type: "say", text: "spam" });
     const id = a.sent.at(-1).message.id;
-    await msg(a, { type: "delete", id });
-    assert.deepEqual(a.sent.at(-1), { type: "error", error: "forbidden" });
     await msg(mod, { type: "identify", code: CODE2 });
+    await msg(mod, { type: "delete", id });
+    assert.deepEqual(mod.sent.at(-1), { type: "error", error: "forbidden" });
     await msg(mod, { type: "register", name: "bdlglua" });
     assert.deepEqual(mod.sent.at(-1), { type: "error", error: "reserved" });
     await msg(mod, { type: "auth", key: "wrong" });
@@ -211,10 +211,93 @@ describe("hub", () => {
     assert.deepEqual(a.sent.at(-1), { type: "error", error: "banned" });
   });
 
+  it("lets a member edit and delete their own messages, and tells each page which are its own", async () => {
+    const a = socket("a"), b = socket("b"); sockets.push(a, b);
+    await msg(a, { type: "identify", code: CODE });
+    await msg(a, { type: "register", name: "Bob" });
+    await msg(b, { type: "identify", code: CODE2 });
+    await msg(b, { type: "register", name: "Ann" });
+    await msg(a, { type: "say", text: "helo" });
+    const id = a.sent.at(-1).message.id;
+    assert.equal(a.sent.at(-1).message.own, true);
+    assert.equal(b.sent.at(-1).message.own, false);
+    assert.equal("owner" in b.sent.at(-1).message, false);
+    await msg(b, { type: "edit", id, text: "hacked" });
+    assert.deepEqual(b.sent.at(-1), { type: "error", error: "forbidden" });
+    await msg(a, { type: "edit", id, text: "hello" });
+    assert.deepEqual([b.sent.at(-1).type, b.sent.at(-1).message.text, b.sent.at(-1).message.edited], ["edited", "hello", true]);
+    await msg(a, { type: "edit", id, text: "free airdrop" });
+    assert.deepEqual(a.sent.at(-1), { type: "error", error: "blocked" });
+    // A page that comes back learns which shown messages are its own.
+    const again = socket("a2"); sockets.push(again); hub.joined(again);
+    await msg(again, { type: "identify", code: CODE });
+    assert.deepEqual(again.sent.at(-1), { type: "mine", ids: [id] });
+    await msg(a, { type: "delete", id });
+    assert.deepEqual(b.sent.at(-1), { type: "removed", ids: [id] });
+  });
+
   it("refuses the admin key when none is configured", () => {
     assert.equal(sameKey("", undefined), false);
     assert.equal(sameKey(undefined, "k"), false);
     assert.equal(sameKey("k", "k"), true);
+  });
+});
+
+describe("media", () => {
+  const jpeg = (size = 1000) => { const b = new Uint8Array(size); b.set([0xff, 0xd8, 0xff, 0xe0]); return b; };
+  const webm = (size = 1000) => { const b = new Uint8Array(size); b.set([0x1a, 0x45, 0xdf, 0xa3]); return b; };
+  const mp4 = (brand = "isom") => { const b = new Uint8Array(500); b.set([...new TextEncoder().encode("\0\0\0\x18ftyp" + brand)]); return b; };
+  let room;
+  beforeEach(() => { room = new Room(sqlite()); room.register("me", "Bob", { sender: "s", now: T }); });
+
+  it("knows files by their first bytes, not by what the page says", () => {
+    assert.deepEqual(sniff(jpeg()), { kind: "image", mime: "image/jpeg" });
+    assert.deepEqual(sniff(webm(), "audio"), { kind: "audio", mime: "audio/webm" });
+    assert.deepEqual(sniff(webm(), "video"), { kind: "video", mime: "video/webm" });
+    assert.deepEqual(sniff(mp4("M4A ")), { kind: "audio", mime: "audio/mp4" });
+    assert.deepEqual(sniff(mp4("qt  ")), { kind: "video", mime: "video/quicktime" });
+    assert.equal(sniff(new TextEncoder().encode("<svg onload=alert(1)>")), null);
+    assert.equal(sniff(new TextEncoder().encode("<!doctype html><script>")), null);
+  });
+
+  it("stores an upload, attaches it to one message and serves it", () => {
+    const big = jpeg(2.5 * 1024 * 1024);  // three chunks
+    const up = room.saveMedia(big, { kind: "image", owner: "me", sender: "s", now: T });
+    assert.equal(up.media.kind, "image");
+    assert.equal(room.media(up.media.id), null);  // not served before it is in a message
+    const m = room.post({ text: "", media: { id: up.media.id } }, { sender: "s", name: "Bob", owner: "me", now: T }).message;
+    assert.deepEqual(m.media, up.media);
+    assert.deepEqual(room.media(up.media.id).data, big);
+    // Someone else's upload, or one already used, cannot be attached.
+    assert.deepEqual(room.post({ text: "x", media: { id: up.media.id } }, { sender: "s", name: "Bob", owner: "me", now: T + 5000 }), { error: "media" });
+    assert.ok(room.remove(m.id, { owner: "me" }));
+    assert.equal(room.media(up.media.id), null);
+  });
+
+  it("refuses wrong types, files too large, too many uploads and senders without a name", () => {
+    assert.deepEqual(room.saveMedia(new TextEncoder().encode("<html>"), { kind: "image", owner: "me", sender: "s", now: T }), { error: "media_type" });
+    assert.deepEqual(room.saveMedia(jpeg(), { kind: "video", owner: "me", sender: "s", now: T }), { error: "media_type" });
+    assert.deepEqual(room.saveMedia(jpeg(MEDIA_MAX.image + 1), { kind: "image", owner: "me", sender: "s", now: T }), { error: "media_size" });
+    assert.deepEqual(room.saveMedia(jpeg(), { kind: "image", owner: "nobody", sender: "s", now: T }), { error: "name" });
+    for (let i = 0; i < 10; i++) assert.ok(room.saveMedia(jpeg(), { kind: "image", owner: "me", sender: "s", now: T + i }).media);
+    assert.deepEqual(room.saveMedia(jpeg(), { kind: "image", owner: "me", sender: "s", now: T + 20 }), { error: "media_slow" });
+    // Uploads never attached are dropped after an hour.
+    room.saveMedia(jpeg(), { kind: "image", owner: "me", sender: "other", now: T + 2 * 3600 * 1000 });
+    assert.equal(room.sql.exec("SELECT COUNT(*) AS n FROM media").toArray()[0].n, 1);
+  });
+
+  it("serves byte ranges, as Safari needs for videos", async () => {
+    const data = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    const full = serve(new Request("https://x/media/a"), "video/mp4", data);
+    assert.equal(full.status, 200);
+    assert.equal(full.headers.get("Content-Security-Policy"), "default-src 'none'; sandbox");
+    const part = serve(new Request("https://x/media/a", { headers: { Range: "bytes=2-5" } }), "video/mp4", data);
+    assert.equal(part.status, 206);
+    assert.equal(part.headers.get("Content-Range"), "bytes 2-5/10");
+    assert.deepEqual(new Uint8Array(await part.arrayBuffer()), new Uint8Array([3, 4, 5, 6]));
+    const tail = serve(new Request("https://x/media/a", { headers: { Range: "bytes=-3" } }), "video/mp4", data);
+    assert.deepEqual(new Uint8Array(await tail.arrayBuffer()), new Uint8Array([8, 9, 10]));
+    assert.equal(serve(new Request("https://x/media/a", { headers: { Range: "bytes=20-" } }), "video/mp4", data).status, 416);
   });
 });
 

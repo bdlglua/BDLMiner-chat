@@ -38,8 +38,20 @@ export class Hub {
     for (const ws of this.sockets()) this.send(ws, value);
   }
 
+  // A message as one page sees it: `own` when that page wrote it; the
+  // owner's id never leaves the server.
+  view(message, ws) {
+    const { owner, ...rest } = message;
+    return { ...rest, own: !!owner && owner === this.attachment(ws).id };
+  }
+
+  // A new or edited message, to every page with its own `own` flag.
+  share(type, message) {
+    for (const ws of this.sockets()) this.send(ws, { type, message: this.view(message, ws) });
+  }
+
   joined(ws) {
-    this.send(ws, { type: "hello", messages: this.room.history(HISTORY), online: this.sockets().length });
+    this.send(ws, { type: "hello", messages: this.room.history(HISTORY).map((m) => this.view(m, ws)), online: this.sockets().length });
     this.broadcast({ type: "online", count: this.sockets().length });
   }
 
@@ -66,7 +78,9 @@ export class Hub {
         if (typeof m.code !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(m.code)) return this.send(ws, { type: "error", error: "invalid" });
         const id = await hashCode(m.code);
         this.setAttachment(ws, { ...this.attachment(ws), id });
-        return this.you(ws, id);
+        this.you(ws, id);
+        // Which of the messages already shown are this page's own.
+        return this.send(ws, { type: "mine", ids: this.room.history(HISTORY).filter((x) => x.owner === id).map((x) => x.id) });
       }
       case "register": {
         if (!who.id) return this.send(ws, { type: "error", error: "invalid" });
@@ -76,16 +90,28 @@ export class Hub {
       }
       case "say": {
         const name = this.room.nameOf(who.id)?.name;
-        const r = this.room.post({ text: m.text }, { sender: who.sender, name, admin: who.admin, now });
+        const r = this.room.post({ text: m.text, media: m.media }, { sender: who.sender, name, owner: who.id ?? null, admin: who.admin, now });
         if (r.error) return this.send(ws, { type: "error", error: r.error });
-        return this.broadcast({ type: "message", message: r.message });
+        return this.share("message", r.message);
+      }
+      case "edit": {
+        const id = Number(m.id);
+        if (!Number.isInteger(id)) return this.send(ws, { type: "error", error: "invalid" });
+        const r = this.room.edit(id, m.text, { owner: who.id, admin: who.admin });
+        if (r.error) return this.send(ws, { type: "error", error: r.error });
+        return this.share("edited", r.message);
+      }
+      case "delete": {
+        const id = Number(m.id);
+        if (!Number.isInteger(id)) return this.send(ws, { type: "error", error: "invalid" });
+        if (!this.room.remove(id, { owner: who.id, admin: who.admin })) return this.send(ws, { type: "error", error: "forbidden" });
+        return this.broadcast({ type: "removed", ids: [id] });
       }
       case "auth": {
         const ok = sameKey(m.key, this.adminKey);
         if (ok) this.setAttachment(ws, { ...who, admin: true });
         return this.send(ws, { type: "auth", ok });
       }
-      case "delete":
       case "ban":
       case "unbanall": {
         if (!who.admin) return this.send(ws, { type: "error", error: "forbidden" });
@@ -95,8 +121,7 @@ export class Hub {
         }
         const id = Number(m.id);
         if (!Number.isInteger(id)) return this.send(ws, { type: "error", error: "invalid" });
-        const ids = m.type === "ban" ? this.room.ban(id, now) : (this.room.remove(id), [id]);
-        return this.broadcast({ type: "removed", ids });
+        return this.broadcast({ type: "removed", ids: this.room.ban(id, now) });
       }
       case "ping":
         return this.send(ws, { type: "pong" });

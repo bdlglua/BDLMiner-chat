@@ -2,7 +2,7 @@
 // holds the WebSockets with the hibernation API (an idle room costs nothing).
 
 import { DurableObject } from "cloudflare:workers";
-import { Hub } from "./hub.js";
+import { hashCode, Hub } from "./hub.js";
 import { HISTORY, Room } from "./room.js";
 
 export { default } from "./index.js";
@@ -29,7 +29,17 @@ export class ChatRoom extends DurableObject {
   }
 
   recent() {
-    return this.room.history(HISTORY);
+    return this.room.history(HISTORY).map(({ owner, ...m }) => m);
+  }
+
+  // A photo, voice message or video from a page: {media} or {error}.
+  async upload(bytes, { kind, code, sender }) {
+    if (typeof code !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(code)) return { error: "name" };
+    return this.room.saveMedia(new Uint8Array(bytes), { kind, owner: await hashCode(code), sender });
+  }
+
+  file(id) {
+    return this.room.media(id);
   }
 
   async webSocketMessage(ws, message) {
