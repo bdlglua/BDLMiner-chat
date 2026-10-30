@@ -1,0 +1,59 @@
+name: Test and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm test
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency: deploy
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CHAT_ADMIN_KEY: ${{ secrets.CHAT_ADMIN_KEY }}
+      CHAT_SECRET: ${{ secrets.CHAT_SECRET }}
+      WRANGLER: npx --yes wrangler@4.150.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # Until the repository is set up (see README), there is nothing to deploy to.
+      - name: Check the configuration
+        id: config
+        run: |
+          missing=""
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CHAT_ADMIN_KEY CHAT_SECRET; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::warning::Not deployed, missing:$missing (see README)"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy the worker
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          $WRANGLER deploy
+          printf '%s' "$CHAT_ADMIN_KEY" | $WRANGLER secret put CHAT_ADMIN_KEY
+          printf '%s' "$CHAT_SECRET" | $WRANGLER secret put CHAT_SECRET

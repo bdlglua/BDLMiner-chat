@@ -1,0 +1,16 @@
+name = "bdlminer-chat"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+# The room: its messages and bans in SQLite, its WebSockets hibernating.
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "ChatRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ChatRoom"]
+
+[observability]
+enabled = true
