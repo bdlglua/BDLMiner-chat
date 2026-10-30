@@ -9,8 +9,10 @@ team signs in with a key to get a badge and moderate.
 Each browser keeps a random secret code. The first message registers the name chosen
 with that code (the room stores only the code's hash): the name then belongs to it,
 whatever its spelling ("Bob", "bob", "B.o.b", "Böb" are one name), and it can change
-only after **30 days** (a different capitalisation is not a change). *My code* copies
-the code; `/code <code>` on another device brings the name there. At most 3 new names
+only after **30 days** (a different capitalisation is not a change). In the chat's
+settings, *Show my QR code* shows the site's address with the code in its fragment
+(`#chat-code=…`, never sent to a server): scanned by another device, it opens the chat
+there with the same name, and the page takes the code out of its address at once. At most 3 new names
 a day come from one connection, so that clearing the browser does not dodge the wait.
 The team's names (admin, BDL…, moderator, support, team…) are kept for the team, who
 may take any name, even one already registered, at any time.
