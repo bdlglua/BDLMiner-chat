@@ -66,7 +66,8 @@ secret code), `{"type":"register","name"}`, `{"type":"say","text","media":{"id"}
 for the team `{"type":"ban","id"}` and `{"type":"unbanall"}`. The room answers `hello`
 (last 50 messages, people online), `you` (`name`, `changeAt`), `mine` (ids of one's own
 messages shown), `message` and `edited` (each with `own` for that page), `removed`
-(ids), `online` (count), `auth` and `error` (`name`, `reserved`, `taken`, `wait` with
+(ids), `online` (count), `presence` (`members`: the registered names of the open pages,
+one per person, with `team`; `guests`: pages without a name), `auth` and `error` (`name`, `reserved`, `taken`, `wait` with
 `until`, `too_many`, `empty`, `too_long`, `blocked`, `link`, `slow`, `banned`,
 `forbidden`, `invalid`, `gone`, `media`).
 

@@ -50,13 +50,35 @@ export class Hub {
     for (const ws of this.sockets()) this.send(ws, { type, message: this.view(message, ws) });
   }
 
+  // Who is here: the registered names of the open pages (one per person,
+  // however many tabs), the team first, and how many visitors have no name yet.
+  presence(closing = null) {
+    const members = new Map();
+    let guests = 0;
+    for (const ws of this.sockets()) {
+      if (ws === closing) continue;
+      const who = this.attachment(ws);
+      const name = who.id ? this.room.nameOf(who.id)?.name : null;
+      if (!name) guests++;
+      else members.set(who.id, { name, team: !!who.admin || !!members.get(who.id)?.team });
+    }
+    const list = [...members.values()].sort((a, b) => b.team - a.team || a.name.localeCompare(b.name));
+    return { type: "presence", members: list, guests };
+  }
+
+  shareThePresence(closing = null) {
+    this.broadcast(this.presence(closing));
+  }
+
   joined(ws) {
     this.send(ws, { type: "hello", messages: this.room.history(HISTORY).map((m) => this.view(m, ws)), online: this.sockets().length });
     this.broadcast({ type: "online", count: this.sockets().length });
+    this.shareThePresence();
   }
 
   left(closing) {
     this.broadcast({ type: "online", count: this.sockets().filter((ws) => ws !== closing).length });
+    this.shareThePresence(closing);
   }
 
   you(ws, id) {
@@ -80,13 +102,15 @@ export class Hub {
         this.setAttachment(ws, { ...this.attachment(ws), id });
         this.you(ws, id);
         // Which of the messages already shown are this page's own.
-        return this.send(ws, { type: "mine", ids: this.room.history(HISTORY).filter((x) => x.owner === id).map((x) => x.id) });
+        this.send(ws, { type: "mine", ids: this.room.history(HISTORY).filter((x) => x.owner === id).map((x) => x.id) });
+        return this.shareThePresence();
       }
       case "register": {
         if (!who.id) return this.send(ws, { type: "error", error: "invalid" });
         const r = this.room.register(who.id, m.name, { sender: who.sender, admin: who.admin, now });
         if (r.error) return this.send(ws, { type: "error", error: r.error, until: r.until });
-        return this.send(ws, { type: "you", name: r.name, changeAt: r.changeAt });
+        this.send(ws, { type: "you", name: r.name, changeAt: r.changeAt });
+        return this.shareThePresence();
       }
       case "say": {
         const name = this.room.nameOf(who.id)?.name;
@@ -110,7 +134,8 @@ export class Hub {
       case "auth": {
         const ok = sameKey(m.key, this.adminKey);
         if (ok) this.setAttachment(ws, { ...who, admin: true });
-        return this.send(ws, { type: "auth", ok });
+        this.send(ws, { type: "auth", ok });
+        return ok ? this.shareThePresence() : undefined;
       }
       case "ban":
       case "unbanall": {

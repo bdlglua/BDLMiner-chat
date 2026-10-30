@@ -129,7 +129,9 @@ describe("room", () => {
 
 describe("hub", () => {
   let room, hub, sockets;
-  const socket = (sender) => ({ sent: [], att: { sender, admin: false }, send(t) { this.sent.push(JSON.parse(t)); } });
+  // A fake page; presence lists go apart, so that `sent` holds the rest.
+  const socket = (sender) => ({ sent: [], presence: [], att: { sender, admin: false },
+    send(t) { const m = JSON.parse(t); (m.type === "presence" ? this.presence : this.sent).push(m); } });
   const msg = (ws, value, now = T) => hub.receive(ws, JSON.stringify(value), now);
   const CODE = "a".repeat(32), CODE2 = "b".repeat(32);
   beforeEach(() => {
@@ -234,6 +236,25 @@ describe("hub", () => {
     assert.deepEqual(again.sent.at(-1), { type: "mine", ids: [id] });
     await msg(a, { type: "delete", id });
     assert.deepEqual(b.sent.at(-1), { type: "removed", ids: [id] });
+  });
+
+  it("lists the members online, one per person, the team first, and counts the visitors without a name", async () => {
+    const a = socket("a"), a2 = socket("a"), b = socket("b"), guest = socket("g"), mod = socket("m");
+    sockets.push(a, a2, b, guest, mod);
+    for (const ws of sockets) hub.joined(ws);
+    await msg(a, { type: "identify", code: CODE });
+    await msg(a, { type: "register", name: "Zoé" });
+    await msg(a2, { type: "identify", code: CODE });  // the same person, another tab
+    await msg(b, { type: "identify", code: CODE2 });
+    await msg(b, { type: "register", name: "Ann" });
+    await msg(mod, { type: "identify", code: "c".repeat(32) });
+    await msg(mod, { type: "auth", key: "k3y" });
+    await msg(mod, { type: "register", name: "bdlglua" });
+    const last = guest.presence.at(-1);
+    assert.deepEqual(last, { type: "presence", guests: 1, members: [
+      { name: "bdlglua", team: true }, { name: "Ann", team: false }, { name: "Zoé", team: false }] });
+    hub.left(b);
+    assert.deepEqual(guest.presence.at(-1).members.map((m) => m.name), ["bdlglua", "Zoé"]);
   });
 
   it("refuses the admin key when none is configured", () => {
