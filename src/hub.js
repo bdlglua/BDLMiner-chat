@@ -132,7 +132,10 @@ export class Hub {
         return this.broadcast({ type: "removed", ids: [id] });
       }
       case "auth": {
+        // Too many wrong keys: refused without even comparing it.
+        if (!this.room.keyTryAllowed(who.sender, now)) return this.send(ws, { type: "auth", ok: false, error: "slow" });
         const ok = sameKey(m.key, this.adminKey);
+        if (!ok) this.room.keyFailed(who.sender, now);
         if (ok) this.setAttachment(ws, { ...who, admin: true });
         this.send(ws, { type: "auth", ok });
         return ok ? this.shareThePresence() : undefined;

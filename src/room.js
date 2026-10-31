@@ -20,6 +20,7 @@ const BURST = 20;  // messages per sender per 10 minutes
 const BURST_SPAN = 10 * 60 * SECOND;
 export const CHANGE_AFTER = 30 * DAY;
 const NEW_NAMES_PER_DAY = 3;  // per sender, so that clearing the browser does not dodge the 30 days
+const KEY_TRIES_PER_HOUR = 5;  // wrong admin keys per sender: no guessing it
 
 // Media: the largest file per kind, uploads per sender and hour, and all of
 // them together (well within the free plan's storage).
@@ -70,6 +71,7 @@ export class Room {
     if (!columns.includes("media")) sql.exec("ALTER TABLE messages ADD COLUMN media TEXT");
     if (!columns.includes("edited")) sql.exec("ALTER TABLE messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0");
     sql.exec("CREATE TABLE IF NOT EXISTS bans (sender TEXT PRIMARY KEY, t INTEGER NOT NULL)");
+    sql.exec("CREATE TABLE IF NOT EXISTS key_failures (sender TEXT NOT NULL, t INTEGER NOT NULL)");
     sql.exec(`CREATE TABLE IF NOT EXISTS names (id TEXT PRIMARY KEY, name TEXT NOT NULL, folded TEXT NOT NULL UNIQUE,
               t INTEGER NOT NULL, sender TEXT NOT NULL)`);
     sql.exec(`CREATE TABLE IF NOT EXISTS media (id TEXT PRIMARY KEY, t INTEGER NOT NULL, kind TEXT NOT NULL, mime TEXT NOT NULL,
@@ -92,6 +94,17 @@ export class Room {
   message(id) {
     const m = this.sql.exec("SELECT * FROM messages WHERE id = ?", id).toArray()[0];
     return m ? this.row(m) : null;
+  }
+
+  // Whether this sender may try the admin key now: a few wrong keys an hour.
+  keyTryAllowed(sender, now) {
+    return this.sql.exec("SELECT COUNT(*) AS n FROM key_failures WHERE sender = ? AND t > ?", sender, now - HOUR).toArray()[0].n
+      < KEY_TRIES_PER_HOUR;
+  }
+
+  keyFailed(sender, now) {
+    this.sql.exec("DELETE FROM key_failures WHERE t <= ?", now - HOUR);
+    this.sql.exec("INSERT INTO key_failures (sender, t) VALUES (?, ?)", sender, now);
   }
 
   banned(sender) {

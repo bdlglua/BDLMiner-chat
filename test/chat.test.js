@@ -257,6 +257,22 @@ describe("hub", () => {
     assert.deepEqual(guest.presence.at(-1).members.map((m) => m.name), ["bdlglua", "Zoé"]);
   });
 
+  it("stops guessing the admin key after 5 wrong keys an hour, for that address only", async () => {
+    const guess = socket("x"), other = socket("y");
+    sockets.push(guess, other);
+    for (let i = 0; i < 5; i++) {
+      await msg(guess, { type: "auth", key: "wrong" + i }, T + i);
+      assert.deepEqual(guess.sent.at(-1), { type: "auth", ok: false });
+    }
+    await msg(guess, { type: "auth", key: "k3y" }, T + 10);
+    assert.deepEqual(guess.sent.at(-1), { type: "auth", ok: false, error: "slow" });
+    assert.equal(guess.att.admin, false);
+    await msg(other, { type: "auth", key: "k3y" }, T + 10);
+    assert.deepEqual(other.sent.at(-1), { type: "auth", ok: true });
+    await msg(guess, { type: "auth", key: "k3y" }, T + 3600 * 1000 + 5);
+    assert.deepEqual(guess.sent.at(-1), { type: "auth", ok: true });
+  });
+
   it("refuses the admin key when none is configured", () => {
     assert.equal(sameKey("", undefined), false);
     assert.equal(sameKey(undefined, "k"), false);
