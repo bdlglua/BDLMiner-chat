@@ -14,7 +14,7 @@ const BLOCKED = [
 
 // Links are allowed only to the project's own places.
 const ALLOWED_HOSTS = [
-  "github.com", "bdlglua.github.io", "discord.gg", "discord.com", "reddit.com", "www.reddit.com",
+  "github.com", "bdlglua.github.io", "miner.bdl-pool.com", "discord.gg", "discord.com", "reddit.com", "www.reddit.com",
   "mempool.space", "bdlminer-stats.bdlminer-bot.workers.dev",
 ];
 
