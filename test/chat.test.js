@@ -342,12 +342,16 @@ describe("media", () => {
 describe("worker", () => {
   it("opens the room only to the site's pages", async () => {
     assert.equal(allowedOrigin("https://bdlglua.github.io"), true);
+    assert.equal(allowedOrigin("https://miner.bdl-pool.com"), true);  // the site's own domain
+    for (const other of ["http://miner.bdl-pool.com", "https://miner.bdl-pool.com.evil.example", "https://evil.bdl-pool.com",
+      "https://minerxbdl-pool.com", "https://miner.bdl-pool.com:8443"]) assert.equal(allowedOrigin(other), false);
     assert.equal(allowedOrigin("https://evil.example"), false);
     assert.equal(allowedOrigin(null), false);
     const env = { ROOM: { idFromName: () => "x", get: () => ({ fetch: async () => new Response("room") }) } };
     const ws = (origin) => new Request("https://chat.example/ws", { headers: { Upgrade: "websocket", ...(origin ? { Origin: origin } : {}) } });
     assert.equal((await handler.fetch(ws("https://evil.example"), env)).status, 403);
     assert.equal(await (await handler.fetch(ws("https://bdlglua.github.io"), env)).text(), "room");
+    assert.equal(await (await handler.fetch(ws("https://miner.bdl-pool.com"), env)).text(), "room");
     assert.equal((await handler.fetch(new Request("https://chat.example/ws"), env)).status, 426);
   });
 

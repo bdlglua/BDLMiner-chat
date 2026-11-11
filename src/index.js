@@ -4,7 +4,9 @@
 
 import { MEDIA_MAX } from "./room.js";
 
-const SITES = [/^https:\/\/bdlglua\.github\.io$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
+// The site's own address (miner.bdl-pool.com, where bdlglua.github.io now
+// redirects), its GitHub Pages address, and a local preview.
+const SITES = [/^https:\/\/miner\.bdl-pool\.com$/, /^https:\/\/bdlglua\.github\.io$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
 
 export function allowedOrigin(origin) {
   return !!origin && SITES.some((re) => re.test(origin));
