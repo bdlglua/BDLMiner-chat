@@ -2,3 +2,8 @@ node_modules/
 .wrangler/
 .dev.vars
 .env
+
+/rust/target/
+/rust/build/
+
+.wrangler.prebuilt.toml

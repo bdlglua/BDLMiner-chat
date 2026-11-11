@@ -11,30 +11,67 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - uses: ./.github/actions/rust-worker
+      - run: npm ci
       - run: npm test
+      - run: cargo fmt --manifest-path rust/Cargo.toml -- --check
+      - run: cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path rust/Cargo.toml
+      - run: cargo clippy --locked --manifest-path rust/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
+      - run: worker-build --release rust
+      - name: Exercise the real Rust Worker on loopback
+        env:
+          WRANGLER_SEND_METRICS: "false"
+        run: |
+          npx --no-install wrangler dev --local --ip 127.0.0.1 --port 8899 --persist-to "$RUNNER_TEMP/chat-state" --var CHAT_ADMIN_KEY:local-admin --var CHAT_SECRET:local-secret > "$RUNNER_TEMP/chat-local.log" 2>&1 &
+          bdl_chat_pid=$!
+          trap 'kill "$bdl_chat_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8899/ >/dev/null; then break; fi
+            sleep 1
+          done
+          npm run test:runtime || { tail -80 "$RUNNER_TEMP/chat-local.log"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-worker
+          path: rust/build/
+          if-no-files-found: error
 
   deploy:
     needs: test
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     concurrency: deploy
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CHAT_ADMIN_KEY: ${{ secrets.CHAT_ADMIN_KEY }}
       CHAT_SECRET: ${{ secrets.CHAT_SECRET }}
-      WRANGLER: npx --yes wrangler@4.150.0
+      WRANGLER: npx --no-install wrangler
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: rust-worker
+          path: rust/build/
+      - name: Use the tested Rust build
+        run: |
+          python3 - <<'PYCONFIG'
+          from pathlib import Path
+          text = Path('wrangler.toml').read_text().split('\n[build]\n')[0]
+          Path('.wrangler.prebuilt.toml').write_text(text)
+          PYCONFIG
 
       # Until the repository is set up (see README), there is nothing to deploy to.
       - name: Check the configuration
@@ -54,6 +91,6 @@ jobs:
       - name: Deploy the worker
         if: steps.config.outputs.ready == 'true'
         run: |
-          $WRANGLER deploy
+          $WRANGLER deploy --config .wrangler.prebuilt.toml
           printf '%s' "$CHAT_ADMIN_KEY" | $WRANGLER secret put CHAT_ADMIN_KEY
           printf '%s' "$CHAT_SECRET" | $WRANGLER secret put CHAT_SECRET

@@ -1,5 +1,5 @@
 name = "bdlminer-chat"
-main = "src/worker.js"
+main = "rust/build/index.js"
 compatibility_date = "2026-09-01"
 workers_dev = true
 
@@ -14,3 +14,7 @@ new_sqlite_classes = ["ChatRoom"]
 
 [observability]
 enabled = true
+
+[build]
+command = "worker-build --release rust"
+watch_dir = "rust/src"

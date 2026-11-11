@@ -1,8 +1,33 @@
 # BDLMiner chat
 
-The live chat of the [BDLMiner site](https://bdlglua.github.io/BDLMinerV1/): the round
+The live chat of the [BDLMiner site](https://miner.bdl-pool.com/): the round
 bubble at the bottom right. Visitors pick a name and talk, without an account; the
 team signs in with a key to get a badge and moderate.
+
+## Rust runtime
+
+The active Worker is `rust/src/worker.rs`, compiled to WebAssembly with Workers
+SDK 0.8.7. `rust/src/core.rs` implements moderation, identities, names, message
+ownership, bans, media and retention. Only SDK-generated JavaScript loads the
+WASM. The existing `ChatRoom` binding, `site` object name, migration v1 and SQLite
+schema are preserved; no namespace or data reset accompanies deployment.
+`src/*.js` remains the previous implementation for compatibility tests/rollback.
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install worker-build --version 0.8.7 --locked
+cargo test --locked --manifest-path rust/Cargo.toml
+npm ci
+npm test
+worker-build --release rust
+npx wrangler dev --local --ip 127.0.0.1 --port 8899 --var CHAT_ADMIN_KEY:local-admin --var CHAT_SECRET:local-secret
+# In another terminal; the script refuses non-loopback destinations:
+npm run test:runtime
+```
+
+CI tests the real Worker locally, including SQLite BLOBs, hibernating WebSockets,
+ownership and HTTP byte ranges. Deployment uses that tested artifact and the
+existing account/secrets. It sends no chat messages to the public service.
 
 ## Names
 

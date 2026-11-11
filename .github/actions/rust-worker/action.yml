@@ -1,0 +1,19 @@
+name: Rust Worker toolchain
+description: Compile native contracts and Cloudflare WebAssembly from Rust.
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@1.99.1
+      with:
+        targets: wasm32-unknown-unknown
+        components: rustfmt, clippy
+    - uses: actions/cache@v6
+      id: worker-build
+      with:
+        path: |
+          ~/.cargo/bin/worker-build
+          ~/.cargo/bin/worker-codegen
+        key: ${{ runner.os }}-worker-build-0.8.7-rust-1.99.1
+    - if: steps.worker-build.outputs.cache-hit != 'true'
+      shell: bash
+      run: cargo install worker-build --version 0.8.7 --locked
